@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Toaster, toast } from 'sonner'
-
-const CONTRACT = '0x319639B299C6f5559f4352E8620B64a89ea17559'
+import { read, write, CONTRACT } from './genlayer'
 
 type Project = {
+  key: string
   id: string
   name: string
   drift: number // 0-100
@@ -12,6 +12,8 @@ type Project = {
   angle: number
   radius: number // 0-1
   status: 'NOMINAL' | 'WATCH' | 'CRITICAL'
+  lastCheck?: string
+  checks?: number
 }
 
 function driftStatus(d: number): Project['status'] {
@@ -20,18 +22,35 @@ function driftStatus(d: number): Project['status'] {
   return 'NOMINAL'
 }
 
-const INITIAL: Project[] = [
-  { id: 'P-01', name: 'uniswap-v4-core', drift: 18, angle: 35, radius: 0.35, status: 'NOMINAL' },
-  { id: 'P-02', name: 'aave-pool-mainnet', drift: 52, angle: 130, radius: 0.6, status: 'WATCH' },
-  { id: 'P-03', name: 'lido-staking', drift: 81, angle: 210, radius: 0.82, status: 'CRITICAL' },
-  { id: 'P-04', name: 'compound-comet', drift: 33, angle: 300, radius: 0.45, status: 'NOMINAL' },
-  { id: 'P-05', name: 'curve-tricrypto', drift: 64, angle: 255, radius: 0.7, status: 'WATCH' },
-]
-
 function driftColor(d: number) {
   if (d >= 70) return '#FF4D4D'
   if (d >= 40) return '#F59E0B'
   return '#28E0C0'
+}
+
+// stable polar position derived from the on-chain key
+function seedPos(key: string) {
+  let h = 0
+  for (let i = 0; i < key.length; i++) h = (h * 31 + key.charCodeAt(i) + 7) >>> 0
+  const angle = h % 360
+  const radius = 0.3 + ((h >> 9) % 65) / 100
+  return { angle, radius }
+}
+
+function mapProject(key: string, p: any): Project {
+  const drift = Math.max(0, Math.min(100, Math.round(Number(p?.drift_score ?? 0))))
+  const { angle, radius } = seedPos(key)
+  return {
+    key,
+    id: `P-${String(Number(key) + 1).padStart(2, '0')}`,
+    name: String(p?.name ?? `project-${key}`),
+    drift,
+    angle,
+    radius,
+    status: driftStatus(drift),
+    lastCheck: p?.last_check != null && String(p.last_check) ? String(p.last_check) : undefined,
+    checks: p?.checks != null ? Number(p.checks) : undefined,
+  }
 }
 
 // Polar → cartesian within a viewBox of size `size`, center at size/2
@@ -78,10 +97,15 @@ function Gauge({ value, label }: { value: number; label: string }) {
 }
 
 export default function App() {
-  const [projects, setProjects] = useState<Project[]>(INITIAL)
+  const [projects, setProjects] = useState<Project[]>([])
   const [sweep, setSweep] = useState(0)
   const [name, setName] = useState('')
-  const [selected, setSelected] = useState<string>('P-03')
+  const [claims, setClaims] = useState('')
+  const [url, setUrl] = useState('')
+  const [selected, setSelected] = useState<string>('')
+  const [registering, setRegistering] = useState(false)
+  const [checkingKey, setCheckingKey] = useState<string | null>(null)
+  const [loading, setLoading] = useState(true)
 
   // Rotating radar sweep
   useEffect(() => {
@@ -94,17 +118,33 @@ export default function App() {
     return () => cancelAnimationFrame(raf)
   }, [])
 
-  // Live drift jitter
+  // Load tracked projects from the contract on mount
+  async function loadProjects(focusKey?: string) {
+    try {
+      const s: any = await read('stats')
+      const total = Number(s?.total_projects ?? 0)
+      const arr: Project[] = []
+      for (let i = 0; i < total; i++) {
+        const key = String(i)
+        try {
+          const p: any = await read('get_project', [key])
+          if (p) arr.push(mapProject(key, p))
+        } catch {
+          /* skip unreadable key */
+        }
+      }
+      setProjects(arr)
+      setSelected((cur) => focusKey ?? (cur && arr.some((p) => p.key === cur) ? cur : arr[arr.length - 1]?.key ?? ''))
+    } catch (e: any) {
+      toast.error('Failed to load fleet from chain', { description: String(e?.message ?? e) })
+    } finally {
+      setLoading(false)
+    }
+  }
+
   useEffect(() => {
-    const t = setInterval(() => {
-      setProjects((ps) =>
-        ps.map((p) => {
-          const next = Math.max(0, Math.min(100, p.drift + (Math.random() - 0.5) * 6))
-          return { ...p, drift: Math.round(next), status: driftStatus(next) }
-        }),
-      )
-    }, 2200)
-    return () => clearInterval(t)
+    loadProjects()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const SIZE = 460
@@ -112,32 +152,50 @@ export default function App() {
 
   const fleet = useMemo(() => {
     const crit = projects.filter((p) => p.status === 'CRITICAL').length
-    const avg = Math.round(projects.reduce((s, p) => s + p.drift, 0) / projects.length)
+    const avg = projects.length ? Math.round(projects.reduce((s, p) => s + p.drift, 0) / projects.length) : 0
     return { crit, avg, count: projects.length }
   }, [projects])
 
-  function register() {
+  async function register() {
     if (!name.trim()) {
       toast.error('Enter a repo / contract to track.')
       return
     }
-    const id = `P-${String(projects.length + 1).padStart(2, '0')}`
-    const drift = Math.round(Math.random() * 40)
-    const p: Project = {
-      id,
-      name: name.trim(),
-      drift,
-      angle: Math.random() * 360,
-      radius: 0.3 + Math.random() * 0.6,
-      status: driftStatus(drift),
+    setRegistering(true)
+    const tId = toast.loading('Anchoring baseline on-chain… (writes take 30–60s)')
+    try {
+      await write('register_project', [name.trim(), claims.trim(), url.trim()])
+      await read('stats')
+      await loadProjects()
+      toast.success(`Acquired — now tracking "${name.trim()}"`, { id: tId })
+      setName('')
+      setClaims('')
+      setUrl('')
+    } catch (e: any) {
+      toast.error('Registration failed', { id: tId, description: String(e?.message ?? e) })
+    } finally {
+      setRegistering(false)
     }
-    setProjects((ps) => [...ps, p])
-    setSelected(id)
-    toast.success(`${id} acquired — now tracking "${p.name}"`)
-    setName('')
   }
 
-  const sel = projects.find((p) => p.id === selected)
+  async function checkDrift(key: string) {
+    if (checkingKey) return
+    setCheckingKey(key)
+    const tId = toast.loading('Running drift check on-chain… (30–60s)')
+    try {
+      await write('check_drift', [key])
+      const p: any = await read('get_project', [key])
+      const updated = mapProject(key, p)
+      setProjects((ps) => ps.map((x) => (x.key === key ? { ...x, ...updated } : x)))
+      toast.success(`${updated.id} re-scanned · drift ${updated.drift} · ${updated.status}`, { id: tId })
+    } catch (e: any) {
+      toast.error('Drift check failed', { id: tId, description: String(e?.message ?? e) })
+    } finally {
+      setCheckingKey(null)
+    }
+  }
+
+  const sel = projects.find((p) => p.key === selected)
 
   return (
     <div className="relative min-h-screen overflow-hidden bg-[#04201E] font-mono text-[#8fd8c9]">
@@ -190,11 +248,28 @@ export default function App() {
               placeholder="org/protocol-core"
               className="mb-3 w-full rounded border border-[#0d4a44] bg-[#04201E] px-3 py-2 text-sm text-[#8fd8c9] outline-none placeholder:text-[#356b62] focus:border-[#28E0C0]"
             />
+            <label className="mb-1 block text-[10px] tracking-widest text-[#4f998b]">WHITEPAPER CLAIMS</label>
+            <textarea
+              value={claims}
+              onChange={(e) => setClaims(e.target.value)}
+              rows={2}
+              placeholder="e.g. 'immutable, no admin keys, fixed 1% fee'"
+              className="mb-3 w-full resize-none rounded border border-[#0d4a44] bg-[#04201E] px-3 py-2 text-sm text-[#8fd8c9] outline-none placeholder:text-[#356b62] focus:border-[#28E0C0]"
+            />
+            <label className="mb-1 block text-[10px] tracking-widest text-[#4f998b]">PROJECT URL</label>
+            <input
+              value={url}
+              onChange={(e) => setUrl(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && register()}
+              placeholder="https://docs.protocol.xyz"
+              className="mb-3 w-full rounded border border-[#0d4a44] bg-[#04201E] px-3 py-2 text-sm text-[#8fd8c9] outline-none placeholder:text-[#356b62] focus:border-[#28E0C0]"
+            />
             <button
               onClick={register}
-              className="w-full rounded bg-[#28E0C0] py-2 text-sm font-bold tracking-[0.2em] text-[#04201E] transition hover:bg-[#5cf0d6]"
+              disabled={registering}
+              className="w-full rounded bg-[#28E0C0] py-2 text-sm font-bold tracking-[0.2em] text-[#04201E] transition hover:bg-[#5cf0d6] disabled:opacity-50"
             >
-              ▶ BEGIN SCAN
+              {registering ? '◌ SCANNING…' : '▶ BEGIN SCAN'}
             </button>
             <p className="mt-3 text-[10px] leading-relaxed text-[#4f998b]">
               New targets enter the sweep field. The contract anchors a baseline; deviations raise the drift score.
@@ -205,12 +280,16 @@ export default function App() {
           <div className="rounded-lg border border-[#0d4a44] bg-[#062b28]/70 p-4 backdrop-blur">
             <h3 className="mb-3 text-xs font-bold tracking-[0.3em] text-[#28E0C0]">◷ WATCHLIST</h3>
             <div className="space-y-2">
+              {loading && <div className="py-4 text-center text-[11px] text-[#4f998b]">◌ syncing fleet from chain…</div>}
+              {!loading && projects.length === 0 && (
+                <div className="py-4 text-center text-[11px] text-[#4f998b]">∅ no targets yet — acquire one above</div>
+              )}
               {projects.map((p) => (
                 <button
-                  key={p.id}
-                  onClick={() => setSelected(p.id)}
+                  key={p.key}
+                  onClick={() => setSelected(p.key)}
                   className={`w-full rounded border px-2.5 py-2 text-left transition ${
-                    selected === p.id ? 'border-[#28E0C0] bg-[#28E0C0]/10' : 'border-[#0d4a44] hover:border-[#28E0C0]/50'
+                    selected === p.key ? 'border-[#28E0C0] bg-[#28E0C0]/10' : 'border-[#0d4a44] hover:border-[#28E0C0]/50'
                   }`}
                 >
                   <div className="flex items-center justify-between text-[11px]">
@@ -269,9 +348,9 @@ export default function App() {
               {projects.map((p) => {
                 const { x, y } = polar(p.angle, p.radius, SIZE)
                 const c = driftColor(p.drift)
-                const isSel = selected === p.id
+                const isSel = selected === p.key
                 return (
-                  <g key={p.id} onClick={() => setSelected(p.id)} style={{ cursor: 'pointer' }}>
+                  <g key={p.key} onClick={() => setSelected(p.key)} style={{ cursor: 'pointer' }}>
                     <circle cx={x} cy={y} r={isSel ? 8 : 5} fill={c} style={{ filter: `drop-shadow(0 0 6px ${c})` }}>
                       <animate attributeName="opacity" values="1;0.4;1" dur="2s" repeatCount="indefinite" />
                     </circle>
@@ -291,6 +370,14 @@ export default function App() {
                 <div className="text-[10px] text-[#4f998b]">
                   {sel.id} · <span style={{ color: driftColor(sel.drift) }}>{sel.status}</span> · drift {sel.drift}
                 </div>
+                {sel.lastCheck && <div className="text-[9px] text-[#4f998b]">last check · {sel.lastCheck}</div>}
+                <button
+                  onClick={() => checkDrift(sel.key)}
+                  disabled={checkingKey === sel.key}
+                  className="mt-1.5 rounded border border-[#28E0C0]/50 px-2 py-1 text-[10px] font-bold tracking-widest text-[#28E0C0] transition hover:bg-[#28E0C0]/10 disabled:opacity-50"
+                >
+                  {checkingKey === sel.key ? '◌ CHECKING…' : '⟳ RUN DRIFT CHECK'}
+                </button>
               </div>
             )}
           </div>
@@ -299,8 +386,9 @@ export default function App() {
           <div className="rounded-lg border border-[#0d4a44] bg-[#062b28]/70 p-5 backdrop-blur">
             <h3 className="mb-4 text-xs font-bold tracking-[0.3em] text-[#28E0C0]">◴ DRIFT TELEMETRY</h3>
             <div className="flex flex-wrap justify-around gap-4">
+              {projects.length === 0 && <div className="py-6 text-[11px] text-[#4f998b]">No telemetry yet.</div>}
               {projects.map((p) => (
-                <Gauge key={p.id} value={p.drift} label={p.name} />
+                <Gauge key={p.key} value={p.drift} label={p.name} />
               ))}
             </div>
           </div>
