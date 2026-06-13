@@ -1,16 +1,43 @@
-<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>DriftGuard</title><script src="https://cdn.tailwindcss.com"></script></head>
-<body class="bg-gray-950 text-white min-h-screen p-6"><div class="max-w-2xl mx-auto">
-<h1 class="text-2xl font-bold mb-6">🌊 DriftGuard</h1>
-<div class="bg-gray-900 rounded-xl p-6 mb-4 border border-gray-800 space-y-3">
-<h2 class="text-emerald-400 font-semibold">Register Project</h2>
-<input placeholder="Project name" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-600 outline-none">
-<textarea placeholder="Whitepaper claims..." rows="3" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-600 outline-none resize-none"></textarea>
-<input placeholder="Project URL" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-600 outline-none">
-<button class="w-full bg-emerald-600 hover:bg-emerald-700 rounded-lg py-3 font-bold">Register</button>
-</div>
-<div class="bg-gray-900 rounded-xl p-6 border border-gray-800 space-y-3">
-<h2 class="text-red-400 font-semibold">Check Drift</h2>
-<input placeholder="Project key" class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-600 outline-none">
-<button class="w-full bg-red-600 hover:bg-red-700 rounded-lg py-3 font-bold">🔍 Scan for Drift</button>
-</div>
-</div></body></html>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>DriftGuard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-[#0a0f1a] text-white min-h-screen">
+  <nav class="border-b border-indigo-900/30 px-6 py-4 flex justify-between items-center">
+    <div class="flex items-center gap-2"><span class="text-2xl">🌊</span><h1 class="text-xl font-bold">DriftGuard</h1></div>
+    <span class="text-xs text-indigo-400">Promise Accountability Layer</span>
+  </nav>
+  <main class="max-w-3xl mx-auto p-6 space-y-6">
+    <!-- Register -->
+    <section class="bg-indigo-950/20 rounded-2xl p-6 border border-indigo-900/30">
+      <h2 class="text-indigo-300 font-semibold mb-4">Register Project</h2>
+      <input placeholder="Project name" class="w-full bg-black/30 border border-indigo-900/30 rounded-xl px-4 py-3 mb-3 placeholder-gray-600 outline-none">
+      <textarea placeholder="Whitepaper claims/promises" rows="3" class="w-full bg-black/30 border border-indigo-900/30 rounded-xl px-4 py-3 mb-3 placeholder-gray-600 outline-none resize-none"></textarea>
+      <input placeholder="Project URL" class="w-full bg-black/30 border border-indigo-900/30 rounded-xl px-4 py-3 mb-3 placeholder-gray-600 outline-none">
+      <button class="w-full bg-indigo-600 hover:bg-indigo-500 rounded-xl py-3 font-bold transition">Register & Monitor</button>
+    </section>
+
+    <!-- Project Card with drift meter -->
+    <section class="bg-indigo-950/20 rounded-2xl p-6 border border-indigo-900/30">
+      <div class="flex justify-between items-center mb-4">
+        <div><h3 class="font-semibold">Uniswap</h3><p class="text-xs text-gray-500">Registered • 0 checks</p></div>
+        <div class="text-center">
+          <div class="text-3xl font-bold text-green-400">0</div>
+          <p class="text-[10px] text-gray-500 uppercase">Drift Score</p>
+        </div>
+      </div>
+      <!-- Drift meter bar -->
+      <div class="bg-gray-800 rounded-full h-2 overflow-hidden">
+        <div class="h-full bg-gradient-to-r from-green-500 to-green-400 rounded-full" style="width:0%"></div>
+      </div>
+      <div class="flex justify-between text-[10px] text-gray-600 mt-1">
+        <span>0 — All delivered</span><span>100 — Nothing shipped</span>
+      </div>
+      <button class="w-full mt-4 bg-red-900/50 hover:bg-red-800/50 border border-red-800 rounded-xl py-2 text-sm font-semibold text-red-300 transition">🔍 Check Drift Now</button>
+    </section>
+  </main>
+</body>
+</html>
