@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Toaster, toast } from 'sonner'
-import { read, write, CONTRACT } from './genlayer'
+import { read, write, CONTRACT, connectWallet, isWalletConnected } from './genlayer'
 
 type Project = {
   key: string
@@ -106,6 +106,19 @@ export default function App() {
   const [registering, setRegistering] = useState(false)
   const [checkingKey, setCheckingKey] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [wallet, setWallet] = useState<string | null>(null)
+
+  const shortAddr = (a: string) => `${a.slice(0, 6)}…${a.slice(-4)}`
+
+  async function handleConnect() {
+    try {
+      const addr = await connectWallet()
+      setWallet(addr)
+      toast.success(`Wallet ${isWalletConnected() ? 'connected' : 'linked'} · ${shortAddr(addr)}`)
+    } catch (e: any) {
+      toast.error('Wallet connection failed', { description: String(e?.message ?? e) })
+    }
+  }
 
   // Rotating radar sweep
   useEffect(() => {
@@ -232,6 +245,12 @@ export default function App() {
             <div className={`text-lg font-bold tabular-nums ${fleet.crit ? 'animate-pulse text-[#FF4D4D]' : 'text-[#28E0C0]'}`}>{fleet.crit}</div>
             <div className="tracking-widest text-[#4f998b]">CRITICAL</div>
           </div>
+          <button
+            onClick={handleConnect}
+            className="rounded border border-[#28E0C0]/60 px-3 py-1.5 text-[11px] font-bold tracking-[0.2em] text-[#28E0C0] transition hover:bg-[#28E0C0]/10"
+          >
+            {wallet ? `◉ ${shortAddr(wallet)}` : '◌ CONNECT WALLET'}
+          </button>
         </div>
       </header>
 
