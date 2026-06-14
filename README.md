@@ -10,10 +10,6 @@ Comparing whitepaper promises against current reality is pure interpretation. "C
 
 **GenLayer (Bradbury):** `0x319639B299C6f5559f4352E8620B64a89ea17559`
 
-## Test
-
-Registered: Uniswap ("Decentralized exchange with concentrated liquidity") → drift_score=0 (registered, not checked yet).
-
 ## Structure
 
 ```
